@@ -1,0 +1,20 @@
+{
+  "meta": {
+    "title": "版本自适应",
+    "description": "自检当前 DSH 运行时版本，按 DSH 自己的规则扫描已装插件的版本兼容性，并标出仍在使用 v0.1.6 以来已变更 API 的位置。"
+  },
+  "panel": {
+    "title": "版本自适应",
+    "scan": "重新扫描",
+    "copy": "复制 Markdown",
+    "plugin": "插件",
+    "declared": "声明",
+    "status": "状态",
+    "details": "说明",
+    "runtime": "运行时",
+    "profile": "Profile",
+    "generatedAt": "生成于",
+    "versionsTitle": "版本内容（官方 release notes 摘录）",
+    "readOnly": "只读。"
+  }
+}

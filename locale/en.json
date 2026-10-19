@@ -1,0 +1,20 @@
+{
+  "meta": {
+    "title": "Version Adaptive",
+    "description": "Self-check the running DSH version, scan every installed plugin for version compatibility with DSH's own rules, and point at code that still uses APIs changed since v0.1.6."
+  },
+  "panel": {
+    "title": "Version Adaptive",
+    "scan": "Rescan",
+    "copy": "Copy Markdown",
+    "plugin": "Plugin",
+    "declared": "Declared",
+    "status": "Status",
+    "details": "Details",
+    "runtime": "runtime",
+    "profile": "Profile",
+    "generatedAt": "generated at",
+    "versionsTitle": "Version content (from official release notes)",
+    "readOnly": "Read-only."
+  }
+}

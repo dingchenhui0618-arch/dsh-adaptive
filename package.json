@@ -1,0 +1,65 @@
+{
+  "name": "dsh-adaptive",
+  "version": "0.1.0",
+  "description": "版本自适应：自检当前 DSH 运行时版本，按 DSH 自己的规则扫描已装插件的版本兼容性，并用 release notes 摘出的规则标出仍在使用的破坏性 API。只读，不联网，不改插件。",
+  "type": "module",
+  "main": "index.js",
+  "icon": "./icon.svg",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "src",
+    "locale/*.json",
+    "icon.svg",
+    "cordis.patch.yml",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "dsh": ">=0.2.1-rc.2 <0.3.0"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "compatibility",
+    "version",
+    "migration",
+    "upgrade",
+    "版本自适应"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dingchenhui0618-arch/dsh-adaptive.git"
+  },
+  "homepage": "https://github.com/dingchenhui0618-arch/dsh-adaptive#readme",
+  "bugs": {
+    "url": "https://github.com/dingchenhui0618-arch/dsh-adaptive/issues"
+  },
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-layout"
+      ],
+      "platform": "web"
+    }
+  }
+}
