@@ -82,7 +82,7 @@ DSH 不会拒绝它们，升级后也没有任何判据能提示风险。
 - **agent 工具** `adaptive_report`：参数 `refresh`、`format: json|markdown`、`includeHints`；
   返回结构化结果，`format=markdown` 时附带完整 Markdown 报告。
 
-本机实测（`0.2.1-rc.2`，desktop Profile，15 个依赖）：兼容 4、未声明 11、不兼容 0、
+本机实测（`0.2.1-rc.2`，desktop Profile，16 个依赖）：兼容 4、未声明 12、不兼容 0、
 迁移提示 3（`dsh-den`、`dsh-in-hand`、`@michengai/dsh-pua` 各一处仍在用 `snapshotEvents` / `eventAt` / `ownEvents`）。
 同一份数据可在浏览器里打开 `GET /dsh-adaptive/state` 复核；面板页脚还会显示本插件自己的
 agent 工具是否注册成功（`self.toolRegistered`）。
