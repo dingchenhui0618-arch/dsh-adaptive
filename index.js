@@ -281,7 +281,6 @@ export function apply(ctx, config) {
       summary: report.summary,
       plugins,
       exemptions: report.exemptions,
-      markdown: format === 'markdown' ? renderMarkdown(report) : undefined,
     }
   }
 
@@ -413,7 +412,10 @@ export function apply(ctx, config) {
           const report = await getReport(input.refresh === true)
           const includeHints = input.includeHints !== false
           const format = input.format === 'markdown' ? 'markdown' : 'json'
-          return { ...compactReport(report, format, includeHints), markdown: format === 'markdown' ? renderMarkdown(report) : undefined }
+          // 工具返回值必须是无损 JSON：markdown 只在需要时挂上，不要留 undefined 字段。
+          const result = compactReport(report, format, includeHints)
+          if (format === 'markdown') result.markdown = renderMarkdown(report)
+          return result
         },
       })
     } catch {
