@@ -225,9 +225,18 @@ window.__ModuleLoader__.load({
         var options = force ? { method: 'POST' } : { headers: { accept: 'application/json' } }
         fetch(url, options)
           .then(function (response) {
-            return response.json().then(function (body) {
-              if (!response.ok || body.ok !== true) {
-                throw new Error((body && body.error && body.error.message) || ('HTTP ' + String(response.status)))
+            return response.text().then(function (text) {
+              var body = null
+              if (text !== '') {
+                try {
+                  body = JSON.parse(text)
+                } catch (parseError) {
+                  throw new Error('HTTP ' + response.status + '，响应不是 JSON：' + text.slice(0, 160))
+                }
+              }
+              if (!response.ok || body === null || body.ok !== true) {
+                var reason = body && body.error && body.error.message
+                throw new Error(reason || ('HTTP ' + response.status + (text === '' ? '，空响应——宿主的 /dsh-adaptive 路由没挂上' : '')))
               }
               return body
             })
@@ -312,6 +321,7 @@ window.__ModuleLoader__.load({
               h('h4', null, '插件自检'),
               h('div', { className: 'da-note' },
                 (data.self.toolRegistered === true ? 'agent 工具已注册' : data.self.toolRegistered === false ? 'agent 工具未注册（宿主没有 tools 服务？）' : 'agent 工具状态未知') +
+                (data.self.registration ? ` · 路由经 ${data.self.registration} 等依赖就绪后挂载` : '') +
                 ' · 数据来自 /dsh-adaptive/state',
               ),
             ) : null,

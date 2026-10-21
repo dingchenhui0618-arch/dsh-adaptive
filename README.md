@@ -9,10 +9,10 @@
 
 ![版本自适应面板](docs/panel.png)
 
-实机截图（desktop Profile、运行时 `0.2.1-rc.2`、16 个依赖）：顶部是运行时版本与 Profile 来源，
+实机截图（desktop Profile、运行时 `0.2.1-rc.2`、18 个依赖）：顶部是运行时版本与 Profile 来源，
 中间一排六个状态计数，左边逐插件表格可展开看版本约束 / 未满足项 / 迁移提示，右边是版本内容快照、
-判定规则说明与本插件自检。左上角的绿色圆点是另一个插件 `dsh-den` 的浮窗入口，底部是宿主自己的
-输入框——两者都不是本插件的界面，只是同一屏里同时存在。
+判定规则说明与本插件自检。画面左下的「斗地主」、底部的「德州扑克」两张浮动卡片是别的插件的浮窗，
+底部输入框是宿主自己的——它们都不是本插件的界面，只是同一屏里同时存在。
 
 ## 为什么需要它
 
@@ -91,10 +91,11 @@ DSH 不会拒绝它们，升级后也没有任何判据能提示风险。
 - **agent 工具** `adaptive_report`：参数 `refresh`、`format: json|markdown`、`includeHints`；
   返回结构化结果，`format=markdown` 时附带完整 Markdown 报告。
 
-本机实测（`0.2.1-rc.2`，desktop Profile，16 个依赖）：兼容 4、未声明 12、不兼容 0、
+本机实测（`0.2.1-rc.2`，desktop Profile，18 个依赖）：兼容 4、未声明 14、不兼容 0、
 迁移提示 3（`dsh-den`、`dsh-in-hand`、`@michengai/dsh-pua` 各一处仍在用 `snapshotEvents` / `eventAt` / `ownEvents`）。
 同一份数据可在浏览器里打开 `GET /dsh-adaptive/state` 复核；面板页脚还会显示本插件自己的
-agent 工具是否注册成功（`self.toolRegistered`）。
+agent 工具是否注册成功（`self.toolRegistered`），以及路由是靠哪种方式挂上的（`self.registration`：
+`ctx.inject` 表示等宿主服务就绪后再注册；`ctx.effect` 是旧的一次性读取）。
 
 ## 边界
 
@@ -103,6 +104,9 @@ agent 工具是否注册成功（`self.toolRegistered`）。
 - **只在本机 `0.2.1-rc.2` 上实测**，`engines.dsh` 因此声明为 `>=0.2.1-rc.2 <0.3.0`；
   面板与工具都软读服务（`webServer` / `tools` / `pluginManager` 缺失时插件仍能激活，只是少一个入口）。
 - 兼容判定是复刻，不是引用 DSH 的内部函数；DSH 改判据时这里要跟着改（本插件自己也会因此被判为不兼容）。
+- **注册顺序不靠运气**：DSH 不保证 `webServer` / `tools` 先于本插件激活。读一次 `ctx.get()` 读到
+  `undefined` 就放弃，会让面板与工具**静默消失**（插件仍是 `active`）——0.1.1 起改用
+  `ctx.inject(deps, cb)`，等依赖就绪再注册，`self.registration` 会写明实际用的是哪条路径。
 - 迁移提示跳过 `node_modules`、`test`、`dist`、`tmp`、`_tmp` 等目录，只扫 `.js/.mjs/.cjs/.ts/.tsx/.jsx/.yml/.yaml`。
 
 ## 开发

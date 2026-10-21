@@ -1,6 +1,20 @@
 # Changelog
 
-## 未发布（面板重排）
+## 0.1.1
+
+修复面板报 `Failed to execute 'json' on 'Response': Unexpected end of JSON input`（2026-10-21 实测）。
+
+- **根因**：DSH 不保证 `webServer` / `tools` 在本插件之前激活。旧实现用 `ctx.effect()` 读一次
+  `ctx.get()`，读到 `undefined` 就跳过注册且不再重试——插件状态仍是 `active`，路由却从未挂上，
+  面板拿到空响应（HTTP 404、0 字节），`response.json()` 于是抛 `Unexpected end of JSON input`。
+  `self.toolRegistered` 同时为 `undefined`，等于两个入口一起消失。
+- **修复**：改用 cordis 的 `ctx.inject(deps, cb)`，依赖就绪后才注册路由与工具，并随作用域自动清理；
+  没有该 API 的旧环境退化成原来的行为。
+- 自检新增 `self.registration`（`ctx.inject` / `ctx.effect`），面板页脚显示路由是靠哪种方式挂上的。
+- 面板错误态不再直接抛 JSON 解析异常：空响应显示「HTTP 404，空响应——宿主的 /dsh-adaptive 路由没挂上」。
+- 新增回归测试：激活那一刻服务还没就绪 → 就绪回调后路由与工具都在（共 34 个测试）。
+
+### 面板重排
 
 - 表格改成固定列宽的三列（插件与版本声明 / 状态 / 说明），版本约束内联在插件名下方，
   超过两条截断、悬停看全部，不再把整段声明塞进一列里挤坏排版。
@@ -9,7 +23,7 @@
 - 右侧参考栏用分隔线切成「版本内容 / 判定规则 / 提示怎么来的 / 插件自检」四段，
   长文本限制在 74ch 内。
 - 面板留 16px 左右内边距、底部 160px 给宿主输入框让位，适配窄窗口（≤1100px 单列）。
-- README 增加 `docs/panel.png` 实机截图（desktop Profile、`0.2.1-rc.2`、16 个依赖）。
+- README 增加 `docs/panel.png` 实机截图（desktop Profile、`0.2.1-rc.2`、18 个依赖）。
 
 ## 0.1.0
 

@@ -125,6 +125,65 @@ test('宿主半区：注册路由与工具，并在面板接口上返回真实�
   }
 })
 
+test('宿主半区：服务晚于本插件就绪时，靠 ctx.inject 在就绪后补注册（2026-10-21 回归）', async () => {
+  const profileDir = makeProfile()
+  const previous = process.env.DSH_PROFILE_DIR
+  process.env.DSH_PROFILE_DIR = profileDir
+  try {
+    const services = createServices(profileDir)
+    const pending = []
+    const cleanups = []
+    const ctx = {
+      // 关键：激活那一刻两个服务都还没就绪，旧实现读一次 ctx.get 就永远放弃。
+      get: () => undefined,
+      effect(fn) {
+        const dispose = fn()
+        if (typeof dispose === 'function') cleanups.push(dispose)
+      },
+      inject(deps, callback) {
+        pending.push({ deps, callback })
+      },
+    }
+    apply(ctx, {})
+    assert.equal(services.webServer.routes.length, 0)
+    assert.equal(services.tools.definitions.length, 0)
+    assert.equal(pending.length, 2)
+
+    const scoped = {
+      webServer: services.webServer,
+      tools: services.tools,
+      get(name) {
+        return services[name]
+      },
+      effect(fn) {
+        const dispose = fn()
+        if (typeof dispose === 'function') cleanups.push(dispose)
+      },
+    }
+    for (const entry of pending) entry.callback(scoped)
+
+    assert.equal(services.webServer.routes.length, 1)
+    assert.equal(services.webServer.routes[0].path, '/dsh-adaptive')
+    assert.equal(services.tools.definitions.length, 1)
+
+    const response = createResponse()
+    await services.webServer.routes[0].handler({ method: 'GET', url: '/dsh-adaptive/state' }, response)
+    assert.equal(response.output.status, 200)
+    const state = JSON.parse(response.output.body)
+    assert.equal(state.ok, true)
+    assert.equal(state.self.registration, 'ctx.inject')
+    assert.equal(state.summary.total, 1)
+
+    for (const cleanup of cleanups) cleanup()
+    assert.equal(services.webServer.routes[0].disposed, true)
+    assert.equal(services.tools.definitions[0].disposed, true)
+  } finally {
+    if (previous === undefined) delete process.env.DSH_PROFILE_DIR
+    else process.env.DSH_PROFILE_DIR = previous
+    fs.rmSync(profileDir, { recursive: true, force: true })
+  }
+})
+
 test('宿主半区：没有 webServer / tools 时仍能激活（软依赖）', async () => {
   const profileDir = makeProfile()
   const previous = process.env.DSH_PROFILE_DIR

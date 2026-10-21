@@ -184,13 +184,16 @@ export function apply(ctx, config) {
     lastError: undefined,
   }
 
+  // 服务就绪后用的上下文：比插件自己的 ctx 更晚就位，能读到 pluginManager 等服务。
+  let runtimeCtx = ctx
+
   async function runScan() {
-    const located = detectProfileDir(ctx, configuredProfileDir)
+    const located = detectProfileDir(runtimeCtx, configuredProfileDir)
     if (located.directory === undefined) {
       throw new Error('定位不到当前 Profile 目录：没有配置 profileDir，没有 DSH_PROFILE_DIR，$DSH_HOME/profiles 下也找不到装了本插件的 Profile')
     }
-    const runtime = await detectRuntimeVersion(ctx)
-    const exceptions = await readExemptions(ctx)
+    const runtime = await detectRuntimeVersion(runtimeCtx)
+    const exceptions = await readExemptions(runtimeCtx)
     const report = scanProfile({
       profileDir: located.directory,
       runtimeVersion: runtime.version,
@@ -231,9 +234,11 @@ export function apply(ctx, config) {
 
   // 自检：本插件自己的两个入口是否真的挂上了（面板页脚也显示这一条）。
   function selfCheck() {
-    const tools = typeof ctx.get === 'function' ? ctx.get('tools') : undefined
+    const tools = typeof runtimeCtx.get === 'function' ? runtimeCtx.get('tools') : undefined
     const toolRegistered = tools !== null && tools !== undefined && typeof tools.get === 'function' ? Boolean(tools.get(TOOL_NAME)) : undefined
-    return { toolRegistered }
+    // 注册方式写进自检：一眼能看出「路由是等依赖就绪后挂上的」还是退化成旧的一次性读取。
+    const registration = typeof ctx.inject === 'function' ? 'ctx.inject' : 'ctx.effect'
+    return { toolRegistered, registration }
   }
 
   function payload(report) {
@@ -280,9 +285,31 @@ export function apply(ctx, config) {
     }
   }
 
+  /**
+   * 服务就绪后再注册。
+   *
+   * DSH 不保证 `webServer` / `tools` 在本插件之前激活：早期实现用 `ctx.effect()` 读一次
+   * `ctx.get()`，读到 undefined 就直接跳过，之后再也不会重试——插件状态还是 active，
+   * 面板却 404、工具也消失，从外面完全看不出原因（2026-10-21 在 0.2.1-rc.2 上实测踩到）。
+   *
+   * 现在改用 cordis 的 `ctx.inject(deps, cb)`：依赖就绪才执行，且随作用域自动清理。
+   * 没有该 API 的旧环境退化成原来的一次性读取，行为不变。
+   */
+  function onService(names, register) {
+    if (typeof ctx.inject === 'function') {
+      ctx.inject(names, (scoped) => {
+        runtimeCtx = scoped
+        if (typeof scoped.effect === 'function') scoped.effect(() => register(scoped))
+        else register(scoped)
+      })
+      return
+    }
+    ctx.effect(() => register(ctx))
+  }
+
   // ---- HTTP：面板读写 -----------------------------------------------------
-  ctx.effect(() => {
-    const webServer = typeof ctx.get === 'function' ? ctx.get('webServer') : undefined
+  onService(['webServer'], (scoped) => {
+    const webServer = scoped.webServer ?? (typeof scoped.get === 'function' ? scoped.get('webServer') : undefined)
     if (webServer === undefined || webServer === null || typeof webServer.register !== 'function') return () => {}
 
     let disposeRoute
@@ -327,8 +354,8 @@ export function apply(ctx, config) {
   })
 
   // ---- agent 工具 --------------------------------------------------------
-  ctx.effect(() => {
-    const tools = typeof ctx.get === 'function' ? ctx.get('tools') : undefined
+  onService(['tools'], (scoped) => {
+    const tools = scoped.tools ?? (typeof scoped.get === 'function' ? scoped.get('tools') : undefined)
     if (tools === undefined || tools === null || typeof tools.register !== 'function') return () => {}
 
     let disposeTool
