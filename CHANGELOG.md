@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.0
+
+「版本自适应」从只读报告变成可派发：面板只诊断，改动交给插件自己的会话。
+
+- **本地 / 外部之分**：扫描结果带上依赖声明原文与真实目录。`link:` 安装的插件标成「本地」并带仓库路径，
+  外部包（版本号 / tarball）标为外部。未声明的统计也拆成 `local` / `external` / `localUndeclared`。
+- **派发**：面板每行加「适配到当前版本」。点它把一条结构化任务（运行时版本、判定、每条迁移提示的
+  `文件:行号`、要补的 `engines.dsh`、收尾要求）投进**该插件自己的会话**——`sessionController.prompt(...)`，
+  `mode: 'queue'`，冷会话先 resume。不新建会话，也不在当前对话里改代码。
+- **怎么认「对应会话」**：工作目录精确匹配 → 会话标题匹配（`dsh-in-hand` ↔ `dsh-in hand`）→ 上级工作目录；
+  都不中时返回候选让用户点一次（`ECHOOSE`），选择记在 `localStorage`，之后一键直达。
+- 新增路由 `GET /dsh-adaptive/sessions`、`POST /dsh-adaptive/dispatch`；新增 2 个回归测试（共 36 个）。
+- 实机复核：18 个依赖里 16 个兼容、2 个未声明（都是外部 npm 包）、3 条迁移提示；
+  本机 12 个自研插件已统一补上 `engines.dsh: >=0.2.1-rc.2 <0.3.0`。
+
 ## 0.1.1
 
 修复面板报 `Failed to execute 'json' on 'Response': Unexpected end of JSON input`（2026-10-21 实测）。

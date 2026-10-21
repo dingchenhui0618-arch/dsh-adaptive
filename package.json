@@ -1,6 +1,6 @@
 {
   "name": "dsh-adaptive",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "版本自适应：自检当前 DSH 运行时版本，按 DSH 自己的规则扫描已装插件的版本兼容性，并用 release notes 摘出的规则标出仍在使用的破坏性 API。只读，不联网，不改插件。",
   "type": "module",
   "main": "index.js",

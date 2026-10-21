@@ -35,11 +35,16 @@ export function resolveProfileDir(explicit) {
   return undefined
 }
 
-/** 读 Profile 的 package.json 里的依赖名（保持顺序）。 */
-export function readDependencyNames(profileDir) {
+/** 读 Profile 的 package.json 里的依赖清单（名字 + 版本声明原文，保持顺序）。 */
+export function readDependencies(profileDir) {
   const manifest = readJson(path.join(profileDir, 'package.json'))
   if (manifest === undefined || typeof manifest.dependencies !== 'object' || manifest.dependencies === null) return []
-  return Object.keys(manifest.dependencies)
+  return Object.entries(manifest.dependencies).map(([name, spec]) => ({ name, spec: String(spec) }))
+}
+
+/** 只要名字的旧接口，保留给已有调用方。 */
+export function readDependencyNames(profileDir) {
+  return readDependencies(profileDir).map((dependency) => dependency.name)
 }
 
 function listFiles(root, limits) {
@@ -121,8 +126,12 @@ export function scanProfile(options) {
   const plugins = []
   let unreadable = 0
 
-  for (const name of readDependencyNames(profileDir)) {
+  for (const dependency of readDependencies(profileDir)) {
+    const name = dependency.name
     const packageDir = resolvePackageDir(profileDir, name)
+    // `link:` = 本机源码目录（多半是自己开发的插件）；tarball / 版本号 = 外部包。
+    const local = dependency.spec.startsWith('link:')
+    const source = { spec: dependency.spec, local, dir: packageDir }
     const manifest = packageDir === undefined ? undefined : readJson(path.join(packageDir, 'package.json'))
     if (manifest === undefined) {
       unreadable += 1
@@ -137,6 +146,7 @@ export function scanProfile(options) {
         reasons: ['读不到 node_modules 里的 package.json（依赖没装或链接失效）'],
         advisories: [],
         hints: [],
+        ...source,
       })
       continue
     }
@@ -154,6 +164,7 @@ export function scanProfile(options) {
       reasons: evaluation.reasons,
       advisories,
       hints,
+      ...source,
     })
   }
 
@@ -172,6 +183,10 @@ export function scanProfile(options) {
     invalid: plugins.filter((plugin) => plugin.status === 'invalid').length,
     unreadable,
     hints: plugins.reduce((total, plugin) => total + plugin.hints.length, 0),
+    // 本机源码（link:）与外部包分开计数：未声明大多集中在前者，补声明的动作也只能落在前者。
+    local: plugins.filter((plugin) => plugin.local === true).length,
+    external: plugins.filter((plugin) => plugin.local !== true).length,
+    localUndeclared: plugins.filter((plugin) => plugin.local === true && plugin.status === 'unversioned').length,
   }
 
   return {

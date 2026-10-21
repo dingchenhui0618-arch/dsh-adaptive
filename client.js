@@ -5,6 +5,7 @@ window.__ModuleLoader__.load({
   factory(require) {
     var React = require('react')
     var h = React.createElement
+    var clientCtx = null
 
     var API = new URL('dsh-adaptive/', document.baseURI).href
     var MONO = 'ui-monospace,SFMono-Regular,Menlo,Consolas,monospace'
@@ -17,6 +18,12 @@ window.__ModuleLoader__.load({
       '.da-btn{border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);border-radius:6px;padding:4px 10px;font-size:12px;line-height:1.4;cursor:pointer;transition:border-color .12s ease}',
       '.da-btn:hover{border-color:var(--dsw-alias-border-l2)}',
       '.da-btn[disabled]{opacity:.5;cursor:default}',
+      '.da-btn-small{padding:2px 8px;font-size:11px}',
+      '.da-pill-local{margin-left:6px;padding:0 5px;border-radius:4px;border:1px solid var(--dsw-alias-border-l1);font-family:inherit;opacity:.85}',
+      '.da-cell-actions{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center}',
+      '.da-dispatch{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:center}',
+      '.da-dispatch-note{font-size:10.5px;line-height:1.4;max-width:24ch}',
+      '.da-choose{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-top:2px}',
       '.da-meta{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 28px;color:var(--dsw-alias-label-secondary);font-size:11.5px;line-height:1.6}',
       '.da-meta-row{display:flex;gap:8px;min-width:0}',
       '.da-meta-key{flex:0 0 auto;opacity:.72}',
@@ -119,7 +126,7 @@ window.__ModuleLoader__.load({
         ' ' + pad(date.getHours()) + ':' + pad(date.getMinutes()) + ':' + pad(date.getSeconds())
     }
 
-    function PluginRow(plugin, expanded, onToggle) {
+    function PluginRow(plugin, expanded, onToggle, dispatch) {
       var details = []
       if (plugin.reasons && plugin.reasons.length > 0) {
         details.push(h('div', { key: 'reasons' }, h('ul', null, plugin.reasons.map(function (reason, index) {
@@ -148,21 +155,54 @@ window.__ModuleLoader__.load({
       }
       var requirement = requirementSummary(plugin)
       var requirementTitle = requirementText(plugin)
+      var dispatchState = dispatch ? dispatch.state : undefined
+      var dispatchNote = null
+      if (plugin.local === true) {
+        dispatchNote = h('div', { className: 'da-dispatch' },
+          h('button', {
+            className: 'da-btn da-btn-small',
+            type: 'button',
+            disabled: dispatchState === 'busy',
+            title: plugin.dir ? '把适配任务派发到以 ' + plugin.dir + ' 为工作目录的会话' : undefined,
+            onClick: function () { if (dispatch && dispatch.onDispatch) dispatch.onDispatch(plugin.name) },
+          }, dispatchState === 'busy' ? '派发中…' : '适配到当前版本'),
+          dispatchState === 'ok' ? h('span', { className: 'da-dispatch-note da-ok' }, '已派发到它的会话') : null,
+          dispatchState === 'error' ? h('span', { className: 'da-dispatch-note da-bad', title: dispatch.message || '' }, dispatch.message || '派发失败') : null,
+          dispatchState === 'choose' ? h('div', { className: 'da-choose' },
+            h('div', { className: 'da-dispatch-note' }, '没有正好以这个仓库为工作目录的会话，选一个（只选一次，之后记住）：'),
+            (dispatch.sessions || []).slice(0, 6).map(function (session, index) {
+              return h('button', {
+                key: 's' + String(index),
+                className: 'da-btn da-btn-small',
+                type: 'button',
+                title: String(session.cwd || '') + ' · ' + String(session.sessionId || ''),
+                onClick: function () { if (dispatch.onChoose) dispatch.onChoose(plugin.name, String(session.sessionId || '')) },
+              }, (session.title || String(session.sessionId || '').replace(/^session-/, '').slice(0, 8)) + (session.running === true ? ' · 运行中' : ''))
+            }),
+          ) : null,
+        )
+      }
       var row = h('tr', null,
         h('td', null,
           h('div', { className: 'da-name', title: plugin.name }, plugin.name),
-          h('div', { className: 'da-name-ver' }, plugin.version || '—'),
+          h('div', { className: 'da-name-ver' },
+            plugin.version || '—',
+            plugin.local === true ? h('span', { className: 'da-pill da-pill-local', title: plugin.dir || '' }, '本地') : null,
+          ),
           requirement ? h('div', { className: 'da-req da-req-inline', title: requirementTitle || '' }, requirement) : null,
         ),
         h('td', null, statusLabel(plugin.status)),
-        h('td', null, details.length === 0
-          ? h('span', { className: 'da-req', style: { opacity: 0.35 } }, '—')
-          : h('button', {
-            className: 'da-toggle',
-            type: 'button',
-            'aria-expanded': expanded ? 'true' : 'false',
-            onClick: onToggle,
-          }, (expanded ? '▾ ' : '▸ ') + '查看 ' + String(details.length) + ' 项')),
+        h('td', null, h('div', { className: 'da-cell-actions' },
+          details.length === 0
+            ? h('span', { className: 'da-req', style: { opacity: 0.35 } }, '—')
+            : h('button', {
+              className: 'da-toggle',
+              type: 'button',
+              'aria-expanded': expanded ? 'true' : 'false',
+              onClick: onToggle,
+            }, (expanded ? '▾ ' : '▸ ') + '查看 ' + String(details.length) + ' 项'),
+          dispatchNote,
+        )),
       )
       if (!expanded || details.length === 0) return row
       return h(React.Fragment, { key: plugin.name },
@@ -219,30 +259,108 @@ window.__ModuleLoader__.load({
       var openRows = openState[0]
       var setOpenRows = openState[1]
 
+      var dispatchState = React.useState({})
+      var dispatches = dispatchState[0]
+      var setDispatches = dispatchState[1]
+
+      function readJson(response) {
+        return response.text().then(function (text) {
+          var body = null
+          if (text !== '') {
+            try {
+              body = JSON.parse(text)
+            } catch (parseError) {
+              throw new Error('HTTP ' + response.status + '，响应不是 JSON：' + text.slice(0, 160))
+            }
+          }
+          if (!response.ok || body === null || body.ok !== true) {
+            var reason = body && body.error && body.error.message
+            throw new Error(reason || ('HTTP ' + response.status + (text === '' ? '，空响应——宿主的 /dsh-adaptive 路由没挂上' : '')))
+          }
+          return body
+        })
+      }
+
       function load(force) {
         setValue(function (previous) { return { loading: previous.data === null, busy: true, error: null, data: previous.data } })
         var url = API + (force ? 'scan' : 'state')
         var options = force ? { method: 'POST' } : { headers: { accept: 'application/json' } }
         fetch(url, options)
-          .then(function (response) {
-            return response.text().then(function (text) {
-              var body = null
-              if (text !== '') {
-                try {
-                  body = JSON.parse(text)
-                } catch (parseError) {
-                  throw new Error('HTTP ' + response.status + '，响应不是 JSON：' + text.slice(0, 160))
-                }
-              }
-              if (!response.ok || body === null || body.ok !== true) {
-                var reason = body && body.error && body.error.message
-                throw new Error(reason || ('HTTP ' + response.status + (text === '' ? '，空响应——宿主的 /dsh-adaptive 路由没挂上' : '')))
-              }
-              return body
-            })
-          })
+          .then(readJson)
           .then(function (body) { setValue({ loading: false, busy: false, error: null, data: body }) })
           .catch(function (error) { setValue(function (previous) { return { loading: false, busy: false, error: String((error && error.message) || error), data: previous.data } }) })
+      }
+
+      // 派发：只把任务交给「对应会话」，代码改动发生在那边，不在这里。
+      function markDispatch(name, patch) {
+        setDispatches(function (previous) {
+          var next = {}
+          Object.keys(previous).forEach(function (key) { next[key] = previous[key] })
+          next[name] = patch
+          return next
+        })
+      }
+
+      function rememberSession(name, sessionId) {
+        try { window.localStorage.setItem('dsh-adaptive:session:' + name, sessionId) } catch (storageError) { /* 无痕模式忽略 */ }
+      }
+
+      function rememberedSession(name) {
+        try { return window.localStorage.getItem('dsh-adaptive:session:' + name) || '' } catch (storageError) { return '' }
+      }
+
+      function pluginByName(name) {
+        var list = (value.data && value.data.plugins) || []
+        for (var index = 0; index < list.length; index += 1) if (list[index].name === name) return list[index]
+        return null
+      }
+
+      // 先查候选会话：有正好以这个仓库为工作目录的直接用；没有就让用户选一次，之后记住。
+      function dispatchToSession(name) {
+        var plugin = pluginByName(name)
+        if (plugin === null) return
+        var chosen = rememberedSession(name)
+        if (chosen !== '') { sendDispatch(name, chosen); return }
+        markDispatch(name, { state: 'busy' })
+        fetch(API + 'sessions?dir=' + encodeURIComponent(plugin.dir || '') + '&name=' + encodeURIComponent(name), { headers: { accept: 'application/json' } })
+          .then(readJson)
+          .then(function (body) {
+            var sessions = body.sessions || []
+            var exact = null
+            for (var index = 0; index < sessions.length; index += 1) {
+              if (sessions[index].exact === true || sessions[index].titleMatch === true) { exact = sessions[index]; break }
+            }
+            if (exact !== null) { sendDispatch(name, exact.sessionId); return }
+            if (sessions.length === 0) { markDispatch(name, { state: 'error', message: '没有可用的会话' }); return }
+            markDispatch(name, { state: 'choose', sessions: sessions })
+          })
+          .catch(function (error) { markDispatch(name, { state: 'error', message: String((error && error.message) || error) }) })
+      }
+
+      function sendDispatch(name, sessionId) {
+        markDispatch(name, { state: 'busy' })
+        var url = API + 'dispatch?name=' + encodeURIComponent(name) + (sessionId ? '&session=' + encodeURIComponent(sessionId) : '')
+        fetch(url, { method: 'POST' })
+          .then(readJson)
+          .then(function (body) {
+            rememberSession(name, String(body.sessionId || sessionId))
+            markDispatch(name, { state: 'ok', message: String(body.sessionId || sessionId) })
+            openSession(String(body.sessionId || sessionId))
+          })
+          .catch(function (error) { markDispatch(name, { state: 'error', message: String((error && error.message) || error) }) })
+      }
+
+      // 尝试把界面切到那个会话；拿不到导航服务就只是派发，不影响结果。
+      function openSession(sessionId) {
+        if (sessionId === '') return
+        try {
+          var workspace = clientCtx && typeof clientCtx.get === 'function' ? clientCtx.get('uiWorkspace') : undefined
+          if (workspace && typeof workspace.openSession === 'function') {
+            workspace.openSession({ kind: 'session', sessionId: sessionId })
+          }
+        } catch (navigationError) {
+          // 导航失败不影响派发本身。
+        }
       }
 
       React.useEffect(function () { load(false) }, [])
@@ -299,6 +417,12 @@ window.__ModuleLoader__.load({
                     next[plugin.name] = !next[plugin.name]
                     return next
                   })
+                }, {
+                  state: dispatches[plugin.name] ? dispatches[plugin.name].state : undefined,
+                  message: dispatches[plugin.name] ? dispatches[plugin.name].message : undefined,
+                  sessions: dispatches[plugin.name] ? dispatches[plugin.name].sessions : undefined,
+                  onDispatch: dispatchToSession,
+                  onChoose: sendDispatch,
                 })
               })),
             ),
@@ -351,6 +475,7 @@ window.__ModuleLoader__.load({
     }
 
     function apply(ctx) {
+      clientCtx = ctx
       ctx.effect(function () {
         var style = document.createElement('style')
         style.dataset.plugin = 'dsh-adaptive'

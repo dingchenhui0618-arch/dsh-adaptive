@@ -66,7 +66,18 @@ function createServices(profileDir) {
       return { exemptions: { 'plugin-bad@0.9.0': ['0.1.5'] }, warnings: [] }
     },
   }
-  return { webServer, tools, pluginManager, profileDir }
+  const sessionController = {
+    prompts: [],
+    sessions: [],
+    async list() {
+      return { items: sessionController.sessions }
+    },
+    async prompt(request) {
+      sessionController.prompts.push(request)
+      return { accepted: true }
+    },
+  }
+  return { webServer, tools, pluginManager, sessionController, profileDir }
 }
 
 test('宿主半区：注册路由与工具，并在面板接口上返回真实扫描结果', async () => {
@@ -177,6 +188,108 @@ test('宿主半区：服务晚于本插件就绪时，靠 ctx.inject 在就绪�
     for (const cleanup of cleanups) cleanup()
     assert.equal(services.webServer.routes[0].disposed, true)
     assert.equal(services.tools.definitions[0].disposed, true)
+  } finally {
+    if (previous === undefined) delete process.env.DSH_PROFILE_DIR
+    else process.env.DSH_PROFILE_DIR = previous
+    fs.rmSync(profileDir, { recursive: true, force: true })
+  }
+})
+
+test('宿主半区：派发把适配任务送进「以插件仓库为工作目录」的会话（2026-10-21）', async () => {
+  const profileDir = makeProfile()
+  const previous = process.env.DSH_PROFILE_DIR
+  process.env.DSH_PROFILE_DIR = profileDir
+  try {
+    const pluginDir = path.join(profileDir, 'node_modules', 'plugin-bad')
+    // link: 安装 = 本机源码，才允许把任务派回去。
+    fs.writeFileSync(path.join(profileDir, 'package.json'), JSON.stringify({ name: 'profile', dependencies: { 'plugin-bad': 'link:' + pluginDir } }))
+    const services = createServices(profileDir)
+    services.sessionController.sessions = [
+      { sessionId: 'sess-other', cwd: 'D:\\elsewhere', updatedAt: 9, running: false },
+      { sessionId: 'sess-target', cwd: pluginDir, updatedAt: 5, running: false },
+    ]
+    const ctx = createContext(services)
+    apply(ctx, {})
+    const route = services.webServer.routes[0]
+
+    const response = createResponse()
+    await route.handler({ method: 'POST', url: '/dsh-adaptive/dispatch?name=plugin-bad' }, response)
+    assert.equal(response.output.status, 200)
+    const body = JSON.parse(response.output.body)
+    assert.equal(body.ok, true)
+    assert.equal(body.sessionId, 'sess-target')
+    assert.equal(services.sessionController.prompts.length, 1)
+    const sent = services.sessionController.prompts[0]
+    assert.equal(sent.sessionId, 'sess-target')
+    assert.equal(sent.mode, 'queue')
+    assert.equal(sent.content[0].type, 'text')
+    assert.match(sent.content[0].text, /plugin-bad/)
+    assert.match(sent.content[0].text, /engines\.dsh/)
+    assert.match(sent.content[0].text, /0\.2\.1-rc\.2/)
+
+    // 没有以该目录为工作目录的会话：不新建，直接报错让用户先去开会话。
+    services.sessionController.sessions = [{ sessionId: 'sess-other', cwd: 'D:\\elsewhere', updatedAt: 9 }]
+    const missing = createResponse()
+    await route.handler({ method: 'POST', url: '/dsh-adaptive/dispatch?name=plugin-bad' }, missing)
+    assert.equal(missing.output.status, 400)
+    assert.equal(JSON.parse(missing.output.body).error.code, 'ESESSION')
+
+    // 外部包（不是 link:）不能派发。
+    fs.writeFileSync(path.join(profileDir, 'package.json'), JSON.stringify({ name: 'profile', dependencies: { 'plugin-bad': '^0.9.0' } }))
+    const rescan = createResponse()
+    await route.handler({ method: 'POST', url: '/dsh-adaptive/scan' }, rescan)
+    const external = createResponse()
+    await route.handler({ method: 'POST', url: '/dsh-adaptive/dispatch?name=plugin-bad' }, external)
+    assert.equal(external.output.status, 400)
+    assert.equal(JSON.parse(external.output.body).error.code, 'EEXTERNAL')
+  } finally {
+    if (previous === undefined) delete process.env.DSH_PROFILE_DIR
+    else process.env.DSH_PROFILE_DIR = previous
+    fs.rmSync(profileDir, { recursive: true, force: true })
+  }
+})
+
+test('宿主半区：没有精确匹配的会话时不擅自派发，把候选交回去由用户点选（2026-10-21）', async () => {
+  const profileDir = makeProfile()
+  const previous = process.env.DSH_PROFILE_DIR
+  process.env.DSH_PROFILE_DIR = profileDir
+  try {
+    const pluginDir = path.join(profileDir, 'node_modules', 'plugin-bad')
+    fs.writeFileSync(path.join(profileDir, 'package.json'), JSON.stringify({ name: 'profile', dependencies: { 'plugin-bad': 'link:' + pluginDir } }))
+    const services = createServices(profileDir)
+    services.sessionController.sessions = [
+      { sessionId: 'sess-recent', cwd: profileDir, updatedAt: 8 },
+      { sessionId: 'sess-older', cwd: profileDir, updatedAt: 3 },
+      { sessionId: 'sess-elsewhere', cwd: 'D:\\Other', updatedAt: 9 },
+    ]
+    const ctx = createContext(services)
+    apply(ctx, {})
+    const route = services.webServer.routes[0]
+
+    // 候选：只有「上级目录」这一档，按活跃度排序，精确匹配为空。
+    const listed = createResponse()
+    await route.handler({ method: 'GET', url: '/dsh-adaptive/sessions?dir=' + encodeURIComponent(pluginDir) }, listed)
+    assert.equal(listed.output.status, 200)
+    const candidates = JSON.parse(listed.output.body).sessions
+    assert.deepEqual(candidates.map((item) => item.sessionId), ['sess-recent', 'sess-older'])
+    assert.equal(candidates[0].exact, false)
+
+    // 不带 session 直接派发：拒绝并附候选，不写进任何会话。
+    const choose = createResponse()
+    await route.handler({ method: 'POST', url: '/dsh-adaptive/dispatch?name=plugin-bad' }, choose)
+    assert.equal(choose.output.status, 400)
+    const chooseBody = JSON.parse(choose.output.body)
+    assert.equal(chooseBody.error.code, 'ECHOOSE')
+    assert.equal(chooseBody.error.sessions.length, 2)
+    assert.equal(services.sessionController.prompts.length, 0)
+
+    // 指定 session 之后才真正入队。
+    const sent = createResponse()
+    await route.handler({ method: 'POST', url: '/dsh-adaptive/dispatch?name=plugin-bad&session=sess-older' }, sent)
+    assert.equal(sent.output.status, 200)
+    assert.equal(JSON.parse(sent.output.body).sessionId, 'sess-older')
+    assert.equal(services.sessionController.prompts.length, 1)
+    assert.equal(services.sessionController.prompts[0].sessionId, 'sess-older')
   } finally {
     if (previous === undefined) delete process.env.DSH_PROFILE_DIR
     else process.env.DSH_PROFILE_DIR = previous

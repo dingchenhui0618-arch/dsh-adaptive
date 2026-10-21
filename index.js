@@ -306,6 +306,131 @@ export function apply(ctx, config) {
     ctx.effect(() => register(ctx))
   }
 
+  // ---- 派发：把「适配到当前运行时」交给插件自己的会话 -------------------------
+  // 面板只做诊断与派发，不在宿主里改代码：任务被送进「以该插件仓库为工作目录」的那个会话，
+  // 由那个会话的 agent 自己去改、跑测试、提交。找不到对应会话就不新建（用户明确要求）。
+  function adaptationTask(plugin, runtimeVersion) {
+    const lines = [
+      `把插件 \`${plugin.name}\`（${plugin.dir}）适配到当前 DSH 运行时 \`${runtimeVersion}\`。`,
+      '',
+      '## 当前判定',
+      `- 状态：${plugin.status}${plugin.kind === 'none' ? '（未声明 engines.dsh / @deepseek-ai/dsh* peer）' : `（${plugin.kind}）`}`,
+      `- 声明：${Object.keys(plugin.requirements || {}).length === 0 ? '无' : JSON.stringify(plugin.requirements)}`,
+    ]
+    if (Array.isArray(plugin.hints) && plugin.hints.length > 0) {
+      lines.push('', '## 迁移提示（源码里仍在使用已变更接口）')
+      for (const hint of plugin.hints) {
+        lines.push(`- ${hint.title || hint.id}：${hint.advice || ''}`)
+        for (const hit of hint.hits || []) lines.push(`  - \`${hit.path}:${hit.line}\` \`${hit.snippet || ''}\``)
+      }
+    }
+    lines.push(
+      '',
+      '## 请做',
+      '1. 对照 DSH 的 release notes 判断这个插件用到的接口有没有行为或签名变化（版本号对得上不等于能跑）。',
+      '2. 按上面的提示逐处改代码，改完确认没有残留的弃用调用。',
+      '3. 若 package.json 还没有 `engines.dsh`，补上 `>=0.2.1-rc.2 <0.3.0`，让宿主以后升级时能自己判定。',
+      '4. 跑仓库里的测试，全部通过再提交。',
+      '5. 提交并推送，最后用一句话汇报改了什么、测试结果、commit。',
+    )
+    return lines.join('\n')
+  }
+
+  const normalizePath = (value) => String(value ?? '').replace(/[\\/]+/g, '\\').replace(/\\+$/, '').toLowerCase()
+
+  /**
+   * 找出可能的「对应会话」。
+   *
+   * 你的会话大多挂在工作区根目录（例如 D:\\Projects），而不是每个仓库一个工作目录，
+   * 所以先按精确 cwd 匹配，没有就退到「cwd 是插件目录的祖先」这一档，交给用户第一次点选一次，
+   * 之后按选择记住（前端 localStorage）。不猜、不新建。
+   */
+  // 会话标题和插件名对得上，就是「这个插件自己的会话」——你的会话大多是这么命名的。
+  const normalizeTitle = (value) => String(value ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '')
+
+  function candidateSessions(listed, dir, name) {
+    const wanted = normalizePath(dir)
+    const byName = normalizeTitle(name)
+    const byDir = normalizeTitle(String(dir ?? '').split(/[\\/]/).pop())
+    const bases = [byName, byDir].filter((value) => value !== '')
+    const exact = []
+    const titled = []
+    const ancestor = []
+    for (const item of listed.items || []) {
+      if (item.origin === 'subagent' || item.parentSessionId !== undefined) continue
+      if (typeof item.cwd !== 'string' || item.cwd === '') continue
+      const cwd = normalizePath(item.cwd)
+      const projectTitle = item.projections && item.projections.values ? item.projections.values.title : undefined
+      const summary = {
+        sessionId: item.sessionId,
+        title: typeof projectTitle === 'string' ? projectTitle : (typeof item.title === 'string' ? item.title : ''),
+        cwd: item.cwd,
+        running: item.running === true,
+        updatedAt: item.updatedAt || 0,
+        blank: item.blank === true,
+      }
+      const title = normalizeTitle(summary.title)
+      const named = title !== '' && bases.some((base) => title === base || title.includes(base))
+      if (cwd === wanted) exact.push({ ...summary, exact: true, titleMatch: false })
+      else if (named) titled.push({ ...summary, exact: false, titleMatch: true })
+      else if (wanted.startsWith(cwd + '\\')) ancestor.push({ ...summary, exact: false, titleMatch: false })
+    }
+    const byActivity = (left, right) => (right.updatedAt || 0) - (left.updatedAt || 0)
+    return exact.sort(byActivity).concat(titled.sort(byActivity), ancestor.sort(byActivity)).slice(0, 12)
+  }
+
+  async function listCandidateSessions(dir, name) {
+    const controller = typeof runtimeCtx.get === 'function' ? runtimeCtx.get('sessionController') : undefined
+    if (controller === undefined || controller === null || typeof controller.list !== 'function') {
+      return { ok: false, error: { code: 'ENOSERVICE', message: '宿主没有暴露 sessionController，读不到会话列表' } }
+    }
+    const listed = await controller.list({}, new AbortController().signal)
+    return { ok: true, dir, sessions: candidateSessions(listed, dir, name) }
+  }
+
+  async function dispatchAdaptation(name, sessionId) {
+    const controller = typeof runtimeCtx.get === 'function' ? runtimeCtx.get('sessionController') : undefined
+    if (controller === undefined || controller === null || typeof controller.prompt !== 'function') {
+      return { ok: false, error: { code: 'ENOSERVICE', message: '宿主没有暴露 sessionController，无法把任务送进会话' } }
+    }
+    const report = await getReport(false)
+    const plugin = report.plugins.find((item) => item.name === name)
+    if (plugin === undefined) return { ok: false, error: { code: 'ENOTFOUND', message: `没有这个依赖：${name}` } }
+    if (plugin.local !== true) {
+      return { ok: false, error: { code: 'EEXTERNAL', message: `${name} 不是本机源码（link:）安装的，改不到它的源码` } }
+    }
+    const listed = await controller.list({}, new AbortController().signal)
+    const candidates = candidateSessions(listed, plugin.dir, plugin.name)
+    if (candidates.length === 0) {
+      return { ok: false, error: { code: 'ESESSION', message: `没有以 ${plugin.dir}（或其上级目录）为工作目录的会话` } }
+    }
+    let target
+    if (typeof sessionId === 'string' && sessionId !== '') {
+      target = candidates.find((item) => item.sessionId === sessionId)
+      if (target === undefined) {
+        return { ok: false, error: { code: 'ESESSION', message: `会话 ${sessionId} 不在候选里（可能已归档）`, sessions: candidates } }
+      }
+    } else {
+      target = candidates.find((item) => item.exact === true) ?? candidates.find((item) => item.titleMatch === true)
+      if (target === undefined) {
+        // 没有精确匹配：不擅自挑一个别的会话发任务，把候选交回去让用户点一次。
+        return { ok: false, error: { code: 'ECHOOSE', message: '没有正好以这个仓库为工作目录的会话，选一个：', sessions: candidates } }
+      }
+    }
+    const task = adaptationTask(plugin, report.runtimeVersion)
+    await controller.prompt(
+      {
+        requestId: `adaptive-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        sessionId: target.sessionId,
+        mode: 'queue',
+        content: [{ type: 'text', text: task }],
+        clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      },
+      new AbortController().signal,
+    )
+    return { ok: true, sessionId: target.sessionId, wasRunning: target.running === true, task }
+  }
+
   // ---- HTTP：面板读写 -----------------------------------------------------
   onService(['webServer'], (scoped) => {
     const webServer = scoped.webServer ?? (typeof scoped.get === 'function' ? scoped.get('webServer') : undefined)
@@ -338,7 +463,19 @@ export function apply(ctx, config) {
               res.end(body)
               return
             }
-            sendJson(res, 404, { ok: false, error: { code: 'ENOTFOUND', message: `只提供 GET ${ROUTE_PREFIX}/state、POST ${ROUTE_PREFIX}/scan 与 GET ${ROUTE_PREFIX}/report.md` } })
+            if (suffix === '/sessions' && (req.method === 'GET' || req.method === 'HEAD')) {
+              const result = await listCandidateSessions(url.searchParams.get('dir') ?? '', url.searchParams.get('name') ?? '')
+              sendJson(res, result.ok === true ? 200 : 400, result)
+              return
+            }
+            if (suffix === '/dispatch' && req.method === 'POST') {
+              const name = url.searchParams.get('name') ?? ''
+              const session = url.searchParams.get('session') ?? ''
+              const result = await dispatchAdaptation(name, session)
+              sendJson(res, result.ok === true ? 200 : 400, result)
+              return
+            }
+            sendJson(res, 404, { ok: false, error: { code: 'ENOTFOUND', message: `只提供 GET ${ROUTE_PREFIX}/state、POST ${ROUTE_PREFIX}/scan、POST ${ROUTE_PREFIX}/dispatch?name=<包名> 与 GET ${ROUTE_PREFIX}/report.md` } })
           } catch (error) {
             sendJson(res, 500, { ok: false, error: { code: 'EINTERNAL', message: String((error && error.message) || error) } })
           }

@@ -11,7 +11,8 @@
 
 实机截图（desktop Profile、运行时 `0.2.1-rc.2`、18 个依赖）：顶部是运行时版本与 Profile 来源，
 中间一排六个状态计数，左边逐插件表格可展开看版本约束 / 未满足项 / 迁移提示，右边是版本内容快照、
-判定规则说明与本插件自检。画面左下的「斗地主」、底部的「德州扑克」两张浮动卡片是别的插件的浮窗，
+判定规则说明与本插件自检。`link:` 安装的自研插件带「本地」标记，说明列里有「适配到当前版本」——
+点它就把任务派进这个插件自己的会话。画面左下的「斗地主」、底部的「德州扑克」两张浮动卡片是别的插件的浮窗，
 底部输入框是宿主自己的——它们都不是本插件的界面，只是同一屏里同时存在。
 
 ## 为什么需要它
@@ -90,16 +91,35 @@ DSH 不会拒绝它们，升级后也没有任何判据能提示风险。
   - `GET /dsh-adaptive/report.md`
 - **agent 工具** `adaptive_report`：参数 `refresh`、`format: json|markdown`、`includeHints`；
   返回结构化结果，`format=markdown` 时附带完整 Markdown 报告。
+- **派发**（面板行尾的「适配到当前版本」）：
+  - `GET /dsh-adaptive/sessions?dir=<插件目录>&name=<包名>`：候选会话（精确工作目录 → 标题匹配 → 上级目录）
+  - `POST /dsh-adaptive/dispatch?name=<包名>[&session=<会话 id>]`：把适配任务送进那个会话
 
-本机实测（`0.2.1-rc.2`，desktop Profile，18 个依赖）：兼容 4、未声明 14、不兼容 0、
+## 派发：让插件自己的会话去改
+
+面板只做诊断，不在这里改代码。点某行的「适配到当前版本」，任务会被送进**这个插件自己的会话**，
+由那边的 agent 去读 release notes、改代码、跑测试、提交推送——不是新开一个会话，也不是在当前对话里做。
+
+- 找会话的顺序：**工作目录正好等于插件仓库** → **会话标题就是插件名**（`dsh-in-hand` ↔ `dsh-in hand`）→
+  上级工作目录；都没有就返回候选让你点一次（`ECHOOSE`），选择记在浏览器 `localStorage` 里，之后一键直达。
+- 用的是宿主公开服务 `sessionController.prompt({ requestId, sessionId, mode: 'queue', content: [{ type: 'text', text }] })`
+  （`@Remote('prompt')`，名字与签名见 `sessionController` 契约），它会把消息投进该会话的 inbox 并立即起一个 turn；
+  冷会话会先自动 resume。
+- **不新建会话、不猜**：候选里没有精确或标题匹配时直接报错并列出候选，绝不对着无关会话发任务。
+- 任务内容带上：运行时版本、当前判定、每一条迁移提示的 `文件:行号`、需要补的 `engines.dsh` 声明、以及「跑测试再提交」的收尾要求。
+
+本机实测（`0.2.1-rc.2`，desktop Profile，18 个依赖）：兼容 16、未声明 2、不兼容 0、
 迁移提示 3（`dsh-den`、`dsh-in-hand`、`@michengai/dsh-pua` 各一处仍在用 `snapshotEvents` / `eventAt` / `ownEvents`）。
+未声明只剩 2 个外部 npm 包（`@copylee/dsh-computer-use`、`dsh-all-in`）；本机 `link:` 的 12 个自研插件
+都已补上 `engines.dsh`，面板会标成「本地」并给出派发入口。
 同一份数据可在浏览器里打开 `GET /dsh-adaptive/state` 复核；面板页脚还会显示本插件自己的
 agent 工具是否注册成功（`self.toolRegistered`），以及路由是靠哪种方式挂上的（`self.registration`：
 `ctx.inject` 表示等宿主服务就绪后再注册；`ctx.effect` 是旧的一次性读取）。
 
 ## 边界
 
-- **只读**：不安装、不卸载、不改插件状态、不写任何文件。
+- **只读**（本插件自己）：不安装、不卸载、不改插件状态、不写任何文件。派发只是把一条消息投进目标会话，
+  真正的代码改动发生在那个会话里，由它的 agent 按它自己的权限与审批流程执行。
 - **不联网**：版本内容是内置快照，带发布日期与 release 链接；DSH 发新版后需要更新快照。
 - **只在本机 `0.2.1-rc.2` 上实测**，`engines.dsh` 因此声明为 `>=0.2.1-rc.2 <0.3.0`；
   面板与工具都软读服务（`webServer` / `tools` / `pluginManager` 缺失时插件仍能激活，只是少一个入口）。
