@@ -1,7 +1,12 @@
 # dsh-adaptive · 版本自适应
 
+[![CI](https://github.com/dingchenhui0618-arch/dsh-adaptive/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/dingchenhui0618-arch/dsh-adaptive/actions/workflows/ci.yml)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 自检当前 DSH 运行时版本，按 **DSH 自己的规则**扫描当前 Profile 里已装插件的版本兼容性，
 再用官方 release notes 摘出的规则指出源码里仍在使用已变更接口的位置。只读，不联网，不改插件。
+
+> 用着还行的话，点个 ⭐ 就够了——插件市场的「搜插件」按 GitHub star 排序，star 是这个插件能被人翻到的唯一杠杆。
 
 ![icon](icon.svg)
 

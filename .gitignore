@@ -4,3 +4,8 @@ node_modules/
 Thumbs.db
 coverage/
 tmp/
+
+# 环境变量 / 凭据：不入仓（示例文件除外）
+.env
+.env.*
+!.env.example

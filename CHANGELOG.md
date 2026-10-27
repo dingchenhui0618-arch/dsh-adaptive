@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+### 文档与工程
+
+- 新增 [SECURITY.md](SECURITY.md)：扫描读哪些文件与上限（300 文件 / 单文件 400 KB / 合计 2 MB）、
+  `link:` 依赖经 `realpath` 读到真实仓库、子目录符号链接不跟随、**五条路由都没有鉴权**
+  并且 `/dispatch` 会把一条任务 queue 进你已有的会话（写入口）、以及「只读」到底指什么。
+- 新增 `.github/workflows/ci.yml`：ubuntu + windows × node 22/24 跑 `npm test`（36 个用例）。
+- 新增 `screenshots.json`（`docs/panel.png`，真实渲染的面板截图），市场卡片可以直接读到封面。
+- README 顶部补 CI / license 两个 badge 与一句 star 引导。
+- 不改运行逻辑、不升版本。
+
 ## 0.2.0
 
 「版本自适应」从只读报告变成可派发：面板只诊断，改动交给插件自己的会话。
